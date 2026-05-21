@@ -2,6 +2,8 @@
 
 Configurations and setup of other services.
 
+[> Docker](docker.md)
+
 [> Gitlab runner](gitlab-runner.md)
 
 [> PostgreSQL](postgresql.md)

@@ -41,6 +41,7 @@ nav:
     - pgAdmin: 'services/pgadmin.md'
   - Configs:
     - Configurations: 'configs/index.md'
+    - Docker: 'configs/docker.md'
     - Gitlab Runner: 'configs/gitlab-runner.md'
     - PostgreSQL: 'configs/postgresql.md'
     - SSH-key: 'configs/sshkey.md'
