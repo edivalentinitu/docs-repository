@@ -83,6 +83,232 @@ Access the database from one of the configured machines.
 psql -U USERNAME -d DATABASE -h HOST_IP
 ```
 
+### Performance
+
+Default PostgreSQL configuration is deliberately conservative. It assumes the server has **128 MB of RAM** and a **single spinning disk**. If you're running on a modern server with **16 GB of RAM and SSD storage**, the defaults may leave performance on the table.
+
+**Key Settings That Affect Query Performance**
+
+| Setting | Default | Recommended Starting Point | What It Controls |
+|---|---|---|---|
+| `shared_buffers` | 128 MB | 25% of total RAM | PostgreSQL's shared memory cache |
+| `work_mem` | 4 MB | 64-256 MB | Memory for sorts and hash operations per query |
+| `effective_cache_size` | 4 GB | 50-75% of total RAM | Planner's estimate of available OS cache |
+| `random_page_cost` | 4.0 | 1.1 for SSD, 2.0 for HDD | Cost of random disk reads (affects index usage) |
+| `effective_io_concurrency` | 1 | 200 for SSD | Number of concurrent disk I/O operations |
+
+---
+
+**`shared_buffers`**
+
+`shared_buffers` is one of the most important PostgreSQL settings.
+
+PostgreSQL uses it as its primary data cache.
+
+- Too low: PostgreSQL frequently re-reads data from disk.
+- Too high: PostgreSQL competes with the operating system's page cache.
+
+A value around **25% of total RAM** is a good starting point for most workloads.
+
+Example:
+
+```
+16 GB RAM → shared_buffers = 4 GB
+8 GB RAM  → shared_buffers = 2 GB
+2 GB RAM  → shared_buffers = 512 MB
+```
+
+---
+
+**`work_mem`**
+
+`work_mem` is more complicated because it is allocated **per operation**, not per query.
+
+A complex query with:
+
+- 5 sort operations
+- 3 hash joins
+
+could potentially use:
+
+```
+8 × work_mem
+```
+
+Setting:
+
+```
+work_mem = 256 MB
+```
+
+may seem reasonable, but with:
+
+```
+50 concurrent connections
+```
+
+memory usage can grow significantly.
+
+A safer approach:
+
+- Start with **64 MB**
+- Monitor memory usage
+- Increase only if needed
+
+---
+
+**`effective_cache_size`**
+
+`effective_cache_size` does **not allocate memory**.
+
+It tells the PostgreSQL query planner how much memory is likely available for caching:
+
+- PostgreSQL shared buffers
+- Operating system cache
+
+It helps PostgreSQL choose better query plans.
+
+Recommended starting point:
+
+```
+50-75% of total RAM
+```
+
+---
+
+**`random_page_cost`**
+
+This setting is often overlooked.
+
+The default:
+
+```
+random_page_cost = 4.0
+```
+
+tells PostgreSQL that random disk reads are four times more expensive than sequential reads.
+
+This was designed for spinning HDDs.
+
+For SSD storage:
+
+```
+random_page_cost = 1.1
+```
+
+makes random reads closer in cost to sequential reads and encourages PostgreSQL to use indexes more often.
+
+---
+
+**`effective_io_concurrency`**
+
+Controls how many concurrent disk I/O operations PostgreSQL assumes are possible.
+
+Defaults:
+
+```
+effective_io_concurrency = 1
+```
+
+For SSD storage:
+
+```
+effective_io_concurrency = 200
+```
+
+is a common starting point.
+
+For HDD storage:
+
+```
+effective_io_concurrency = 1-2
+```
+
+is usually more appropriate.
+
+---
+
+**Applying Changes**
+
+The following settings can be changed without restarting PostgreSQL:
+
+```sql
+ALTER SYSTEM SET work_mem = '64MB';
+ALTER SYSTEM SET effective_cache_size = '12GB';
+ALTER SYSTEM SET random_page_cost = 1.1;
+ALTER SYSTEM SET effective_io_concurrency = 200;
+
+SELECT pg_reload_conf();
+```
+
+`shared_buffers` requires a PostgreSQL restart:
+
+```sql
+ALTER SYSTEM SET shared_buffers = '4GB';
+```
+
+---
+
+---
+
+**Verify Settings**
+
+Check the active values:
+
+```sql
+SHOW shared_buffers;
+SHOW work_mem;
+SHOW effective_cache_size;
+SHOW random_page_cost;
+SHOW effective_io_concurrency;
+```
+
+---
+
+**Test Query Performance**
+
+After changing settings, test slow queries with:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT ...
+```
+
+Look for improvements such as:
+
+- More `Index Scan` or `Index Only Scan`
+- In-memory sorts instead of disk-based sorts
+- Reduced disk reads
+- Better query execution times
+
+
+**Settings applied in TUG instances** 
+
+**Test instance**
+
+```sql
+ALTER SYSTEM SET shared_buffers = '512MB';
+ALTER SYSTEM SET work_mem = '16MB';
+ALTER SYSTEM SET effective_cache_size = '1536MB';
+ALTER SYSTEM SET random_page_cost = 1.1;
+ALTER SYSTEM SET effective_io_concurrency = 200;
+
+SELECT pg_reload_conf(); 
+``` 
+
+**Production instance**
+
+```sql
+ALTER SYSTEM SET shared_buffers = '2GB';
+ALTER SYSTEM SET work_mem = '32MB';
+ALTER SYSTEM SET effective_cache_size = '6GB';
+ALTER SYSTEM SET random_page_cost = 1.1;
+ALTER SYSTEM SET effective_io_concurrency = 200;
+
+SELECT pg_reload_conf(); 
+```
+
+
 ## Backup & Restore
 
 ### Requirements
@@ -214,3 +440,16 @@ psql db1 < db1_backup.sql
 
 For more information, you can see the [pg_dump](https://www.postgresql.org/docs/12/app-pgdump.html) and [pg_restore](https://www.postgresql.org/docs/12/app-pgrestore.html) reference pages.
 
+## Indexes
+Some operations are highly reliant on database queries. Some tables can have 100k + rows. In order to increase the performance of the filtering, an INDEX needs to be created to speed up the lookup.
+
+Example:
+
+Indexes for our setup:
+
+1. job_id index for jobs_run table
+
+```
+CREATE INDEX idx_jobs_run_job_id_created
+ON jobs_run (job_id, created DESC); 
+```
